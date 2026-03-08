@@ -1,0 +1,36 @@
+{
+  "name": "toedb",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build && tsc -p server/tsconfig.json",
+    "start": "node dist-server/index.js",
+    "import": "tsx server/import.ts",
+    "push": "tsx server/push.ts",
+    "bridge": "tsx server/bridge.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}
