@@ -14,6 +14,7 @@ import {
   getMetrics,
   getMetricKeys,
   getAllMetricKeys,
+  getRunsByEditDistance,
   getSetting,
   setSetting,
   getSettings,
@@ -24,6 +25,9 @@ import {
   getPodState,
   upsertRun,
   insertMetrics,
+  createAblationGroup,
+  getAblationGroups,
+  getAblationGroupsForRun,
 } from "./db.js";
 
 const app = express();
@@ -138,6 +142,32 @@ app.get("/api/runs/:id/metric-keys", requireAuth, (req, res) => {
 
 app.get("/api/metric-keys", requireAuth, (_req, res) => {
   res.json(getAllMetricKeys());
+});
+
+app.get("/api/runs/:id/nearby", requireAuth, (req, res) => {
+  const id = parseInt(req.params.id as string);
+  const maxDistance = parseInt((req.query.distance as string) || "1");
+  res.json(getRunsByEditDistance(id, maxDistance));
+});
+
+// Ablation group routes
+app.get("/api/ablation-groups", requireAuth, (req, res) => {
+  const search = req.query.q as string | undefined;
+  res.json(getAblationGroups(search));
+});
+
+app.post("/api/ablation-groups", requireAuth, (req, res) => {
+  const { name, description, run_ids } = req.body;
+  if (!name || !run_ids || !Array.isArray(run_ids) || run_ids.length === 0) {
+    res.status(400).json({ error: "name and run_ids required" });
+    return;
+  }
+  const id = createAblationGroup(name, description || null, run_ids);
+  res.json({ ok: true, id });
+});
+
+app.get("/api/runs/:id/ablation-groups", requireAuth, (req, res) => {
+  res.json(getAblationGroupsForRun(parseInt(req.params.id as string)));
 });
 
 // Settings routes

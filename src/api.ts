@@ -25,3 +25,11 @@ export type Run = {
 };
 
 export type MetricRow = Record<string, number>;
+
+export type AblationGroup = {
+  id: number;
+  name: string;
+  description: string | null;
+  created_at: string;
+  run_ids: number[];
+};

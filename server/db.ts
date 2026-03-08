@@ -62,6 +62,19 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     completed_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS ablation_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS ablation_group_runs (
+    group_id INTEGER NOT NULL REFERENCES ablation_groups(id) ON DELETE CASCADE,
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    PRIMARY KEY (group_id, run_id)
+  );
 `);
 
 function hashPassword(password: string, salt: string): string {
@@ -141,6 +154,48 @@ export function getRuns(search?: string) {
   return db.prepare("SELECT * FROM runs ORDER BY id DESC").all();
 }
 
+// Compute config param edit distance between two runs
+// A "config param" is each override entry + config + git_sha
+// Edit distance = number of params that differ
+function runConfigParams(run: any): Map<string, string> {
+  const params = new Map<string, string>();
+  params.set("__config__", run.config || "");
+  params.set("__git_sha__", run.git_sha || "");
+  try {
+    const overrides = JSON.parse(run.overrides || "[]") as string[];
+    for (const o of overrides) {
+      const eq = o.indexOf("=");
+      if (eq > 0) {
+        params.set(o.slice(0, eq).replace(/^--/, ""), o.slice(eq + 1));
+      } else {
+        params.set(o.replace(/^--/, ""), "true");
+      }
+    }
+  } catch {}
+  return params;
+}
+
+function configEditDistance(a: Map<string, string>, b: Map<string, string>): number {
+  const allKeys = new Set([...a.keys(), ...b.keys()]);
+  let dist = 0;
+  for (const k of allKeys) {
+    if (a.get(k) !== b.get(k)) dist++;
+  }
+  return dist;
+}
+
+export function getRunsByEditDistance(runId: number, maxDistance: number) {
+  const targetRun = db.prepare("SELECT * FROM runs WHERE id = ?").get(runId) as any;
+  if (!targetRun) return [];
+  const targetParams = runConfigParams(targetRun);
+  const allRuns = db.prepare("SELECT * FROM runs ORDER BY id DESC").all() as any[];
+  return allRuns
+    .filter((r) => r.id !== runId)
+    .map((r) => ({ ...r, _distance: configEditDistance(targetParams, runConfigParams(r)) }))
+    .filter((r) => r._distance <= maxDistance)
+    .sort((a, b) => a._distance - b._distance || b.id - a.id);
+}
+
 export function getRun(id: number) {
   return db.prepare("SELECT * FROM runs WHERE id = ?").get(id);
 }
@@ -216,6 +271,50 @@ export function storePodState(state: string) {
 export function getPodState(): any | null {
   const raw = getSetting("pod_state");
   return raw ? JSON.parse(raw) : null;
+}
+
+// Ablation groups
+export function createAblationGroup(name: string, description: string | null, runIds: number[]): number {
+  const result = db.prepare(
+    "INSERT INTO ablation_groups (name, description) VALUES (?, ?)"
+  ).run(name, description);
+  const groupId = result.lastInsertRowid as number;
+  const insertRun = db.prepare("INSERT INTO ablation_group_runs (group_id, run_id) VALUES (?, ?)");
+  for (const runId of runIds) {
+    insertRun.run(groupId, runId);
+  }
+  return groupId;
+}
+
+export function getAblationGroups(search?: string) {
+  let groups: any[];
+  if (search) {
+    groups = db.prepare(
+      "SELECT * FROM ablation_groups WHERE name LIKE ? OR description LIKE ? ORDER BY created_at DESC"
+    ).all(`%${search}%`, `%${search}%`);
+  } else {
+    groups = db.prepare("SELECT * FROM ablation_groups ORDER BY created_at DESC").all();
+  }
+  // Attach run_ids to each group
+  const getRunIds = db.prepare("SELECT run_id FROM ablation_group_runs WHERE group_id = ?");
+  return groups.map((g) => ({
+    ...g,
+    run_ids: (getRunIds.all(g.id) as Array<{ run_id: number }>).map((r) => r.run_id),
+  }));
+}
+
+export function getAblationGroupsForRun(runId: number) {
+  const groups = db.prepare(
+    `SELECT ag.* FROM ablation_groups ag
+     JOIN ablation_group_runs agr ON ag.id = agr.group_id
+     WHERE agr.run_id = ?
+     ORDER BY ag.created_at DESC`
+  ).all(runId) as any[];
+  const getRunIds = db.prepare("SELECT run_id FROM ablation_group_runs WHERE group_id = ?");
+  return groups.map((g) => ({
+    ...g,
+    run_ids: (getRunIds.all(g.id) as Array<{ run_id: number }>).map((r) => r.run_id),
+  }));
 }
 
 export default db;

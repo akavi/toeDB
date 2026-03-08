@@ -58,7 +58,7 @@ export function App() {
             }}
           />
         )}
-        {view === "chart" && <RunChart runIds={selectedRuns} />}
+        {view === "chart" && <RunChart runIds={selectedRuns} onRunIdsChange={setSelectedRuns} />}
         {view === "pod" && <PodView />}
         {view === "settings" && <Settings />}
       </main>
@@ -68,7 +68,7 @@ export function App() {
 
 const styles: Record<string, React.CSSProperties> = {
   loading: { padding: 40, textAlign: "center", fontFamily: "monospace", color: "#888" },
-  container: { fontFamily: "system-ui, -apple-system, sans-serif", maxWidth: 1400, margin: "0 auto", padding: "0 20px" },
+  container: { fontFamily: "system-ui, -apple-system, sans-serif", maxWidth: 1800, margin: "0 auto", padding: "0 20px" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #ddd", padding: "12px 0" },
   title: { margin: 0, fontSize: 20, fontWeight: 700 },
   nav: { display: "flex", gap: 8 },

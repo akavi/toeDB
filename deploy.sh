@@ -52,8 +52,29 @@ UNIT
 $SSH "systemctl daemon-reload && systemctl enable $SERVICE_NAME && systemctl restart $SERVICE_NAME"
 
 echo "Adding Caddy reverse proxy..."
-$SSH "grep -q 'handle_path /toedb' /etc/caddy/Caddyfile || sed -i '/^kavi.io {/a\\
-\thandle_path /toedb/* {\n\t\treverse_proxy localhost:3457\n\t}' /etc/caddy/Caddyfile"
+$SSH 'python3 -c "
+import re, sys
+path = \"/etc/caddy/Caddyfile\"
+with open(path) as f:
+    text = f.read()
+
+block = \"\"\"
+\tredir /toedb /toedb/ 308
+\thandle_path /toedb/* {
+\t\treverse_proxy localhost:3457
+\t}\"\"\"
+
+# Remove existing toedb block (redir + handle_path) if present
+text = re.sub(r\"\n\t*redir /toedb /toedb/[^\n]*\", \"\", text)
+text = re.sub(r\"\n\t*handle_path /toedb/\* \{[^}]*\}\", \"\", text)
+
+# Insert after \"kavi.io {\"
+text = re.sub(r\"(kavi\.io \{)\", r\"\1\" + block, text)
+
+with open(path, \"w\") as f:
+    f.write(text)
+print(\"Caddyfile updated\")
+"'
 
 $SSH "systemctl reload caddy"
 
