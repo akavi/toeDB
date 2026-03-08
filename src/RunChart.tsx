@@ -8,6 +8,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceArea,
 } from "recharts";
 
 const COLORS = [
@@ -84,6 +85,11 @@ export function RunChart({
   const [smoothing, setSmoothing] = useState(1);
   const [logScale, setLogScale] = useState(false);
 
+  // Zoom state
+  const [zoomLeft, setZoomLeft] = useState<number | null>(null);
+  const [zoomRight, setZoomRight] = useState<number | null>(null);
+  const [xDomain, setXDomain] = useState<[number, number] | null>(null);
+
   // Hover & select state
   const [hoveredRunId, setHoveredRunId] = useState<number | null>(null);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
@@ -110,7 +116,9 @@ export function RunChart({
 
   // highlighted run = hovered or active (only when not multi-selecting)
   const isMultiSelect = shiftSelectedIds.size > 1;
-  const highlightedRunId = isMultiSelect ? null : (hoveredRunId ?? activeRunId);
+  const highlightedRunId = isMultiSelect ? null : (activeRunId ?? hoveredRunId);
+  // For chart lines, hover always takes precedence
+  const chartHighlightedRunId = isMultiSelect ? null : (hoveredRunId ?? activeRunId);
 
   // Load run details & metrics
   useEffect(() => {
@@ -315,6 +323,7 @@ export function RunChart({
     let min = Infinity;
     let max = -Infinity;
     for (const row of chartData) {
+      if (xDomain && (row.iter < xDomain[0] || row.iter > xDomain[1])) continue;
       for (const [k, v] of Object.entries(row)) {
         if (k === "iter") continue;
         if (v < min) min = v;
@@ -325,7 +334,7 @@ export function RunChart({
     const range = max - min || Math.abs(max) || 1;
     const pad = range * 0.2;
     return [min - pad, max + pad] as [number, number];
-  }, [chartData]);
+  }, [chartData, xDomain]);
 
   const seriesNames = useMemo(() => {
     const names: string[] = [];
@@ -740,6 +749,14 @@ export function RunChart({
               <input type="checkbox" checked={logScale} onChange={() => setLogScale(!logScale)} />
               Log scale
             </label>
+            {xDomain && (
+              <button
+                style={{ marginLeft: 8, fontSize: 11, padding: "2px 8px", cursor: "pointer" }}
+                onClick={() => setXDomain(null)}
+              >
+                Reset zoom
+              </button>
+            )}
           </div>
         </div>
         {loading ? (
@@ -747,8 +764,26 @@ export function RunChart({
         ) : (
           <div style={{ width: "100%", flex: 1, minHeight: 400 }}>
             <ResponsiveContainer>
-              <LineChart data={chartData}>
-                <XAxis dataKey="iter" fontSize={11} />
+              <LineChart
+                data={chartData}
+                onMouseLeave={() => { setHoveredRunId(null); setZoomRight(null); }}
+                onMouseDown={(e: any) => {
+                  if (e?.activeLabel != null) setZoomLeft(Number(e.activeLabel));
+                }}
+                onMouseMove={(e: any) => {
+                  if (zoomLeft !== null && e?.activeLabel != null) setZoomRight(Number(e.activeLabel));
+                }}
+                onMouseUp={() => {
+                  if (zoomLeft !== null && zoomRight !== null && zoomLeft !== zoomRight) {
+                    const lo = Math.min(zoomLeft, zoomRight);
+                    const hi = Math.max(zoomLeft, zoomRight);
+                    setXDomain([lo, hi]);
+                  }
+                  setZoomLeft(null);
+                  setZoomRight(null);
+                }}
+              >
+                <XAxis dataKey="iter" fontSize={11} domain={xDomain ?? ["dataMin", "dataMax"]} allowDataOverflow type="number" />
                 <YAxis
                   fontSize={11}
                   domain={yDomain}
@@ -761,14 +796,69 @@ export function RunChart({
                     return v.toPrecision(3);
                   }}
                 />
-                <Tooltip contentStyle={{ fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12 }}
+                  content={({ payload, label, active }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    // Group payload entries by runId
+                    const byRun = new Map<number, typeof payload>();
+                    for (const entry of payload) {
+                      const rid = parseInt(String(entry.dataKey).split(":")[0]);
+                      if (!byRun.has(rid)) byRun.set(rid, []);
+                      byRun.get(rid)!.push(entry);
+                    }
+                    // Determine which run to show diff for (match chart highlight logic)
+                    const hoverRid = chartHighlightedRunId;
+                    return (
+                      <div style={{ background: "white", border: "1px solid #ccc", borderRadius: 4, padding: "6px 10px", fontSize: 12 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>iter: {label}</div>
+                        {hoverRid && runDetails.has(hoverRid) && globalDifferingParams.size > 0 && (() => {
+                          const run = runDetails.get(hoverRid)!;
+                          const params = getRunParams(run);
+                          const diffs = [...globalDifferingParams]
+                            .map(k => [k, params.get(k) ?? ""])
+                            .filter(([, v]) => v !== "");
+                          if (diffs.length === 0) return null;
+                          return (
+                            <div style={{ background: "#fef3c7", borderRadius: 3, padding: "3px 6px", marginBottom: 4 }}>
+                              {diffs.map(([k, v]) => (
+                                <div key={k} style={{ color: "#92400e" }}>
+                                  <span style={{ fontWeight: 500 }}>{k}:</span> {v}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        {payload.map((entry: any) => (
+                          <div key={entry.dataKey} style={{ color: entry.color }}>
+                            {entry.dataKey}: {typeof entry.value === "number" ? entry.value.toPrecision(5) : entry.value}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: 12, cursor: "pointer" }}
+                  onMouseEnter={(e: any) => {
+                    const rid = parseInt(String(e.dataKey).split(":")[0]);
+                    if (!isNaN(rid)) setHoveredRunId(rid);
+                  }}
+                  onMouseLeave={() => setHoveredRunId(null)}
+                  onClick={(e: any) => {
+                    const rid = parseInt(String(e.dataKey).split(":")[0]);
+                    if (!isNaN(rid)) {
+                      setShiftSelectedIds(new Set());
+                      setActiveRunId(activeRunId === rid ? null : rid);
+                    }
+                  }}
+                />
                 {seriesNames.map((name) => {
                   const seriesRunId = parseInt(name.split(":")[0]);
                   const isHighlightedSeries =
-                    highlightedRunId !== null && seriesRunId === highlightedRunId;
+                    chartHighlightedRunId !== null && seriesRunId === chartHighlightedRunId;
                   const isDimmed =
-                    highlightedRunId !== null && seriesRunId !== highlightedRunId;
+                    chartHighlightedRunId !== null && seriesRunId !== chartHighlightedRunId;
                   return (
                     <Line
                       key={name}
@@ -778,9 +868,23 @@ export function RunChart({
                       dot={false}
                       strokeWidth={isHighlightedSeries ? 3 : 1.5}
                       strokeOpacity={isDimmed ? 0.2 : 1}
+                      style={{ cursor: "pointer" }}
+                      activeDot={{
+                        r: 5,
+                        cursor: "pointer",
+                        onClick: () => {
+                          setShiftSelectedIds(new Set());
+                          setActiveRunId(activeRunId === seriesRunId ? null : seriesRunId);
+                        },
+                        onMouseEnter: () => setHoveredRunId(seriesRunId),
+                        onMouseLeave: () => setHoveredRunId(null),
+                      }}
                     />
                   );
                 })}
+                {zoomLeft !== null && zoomRight !== null && (
+                  <ReferenceArea x1={zoomLeft} x2={zoomRight} strokeOpacity={0.3} fill="#2563eb" fillOpacity={0.1} />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
